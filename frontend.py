@@ -1,8 +1,16 @@
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+
+# IMPORTACIONES DE TUS MÓDULOS
+from sheet_acces import get_drive_data
+from calculos import process_hogan_logic
+from import_data import PASSWORD_CEO
+
 def render_ui_report(df, nombre):
     """Genera la visualización de resultados."""
     res_df = process_hogan_logic(df, nombre)
     
-    # Preparar datos para Plotly (evitar errores con Nones)
     pdf = res_df.copy()
     for c in ["Self", "Others"]: pdf[c] = pd.to_numeric(pdf[c], errors="coerce")
     
@@ -30,7 +38,8 @@ def main():
         if email:
             match = data[data['Tu Correo Electrónico'] == email]
             if not match.empty:
-                render_ui_report(data, match['Nombre de la persona Evaluada'].iloc[0])
+                nombre = match['Nombre de la persona Evaluada'].iloc[0]
+                render_ui_report(data, nombre)
             else: st.warning("Correo no registrado.")
 
     else:
@@ -42,7 +51,6 @@ def main():
                 render_ui_report(data, sel)
                 st.divider()
                 st.subheader("Comentarios Cualitativos")
-                # Muestra las últimas 3 columnas de feedback abierto
                 st.dataframe(data[data['Nombre de la persona Evaluada'] == sel].iloc[:, -3:].dropna(how='all'))
 
 if __name__ == "__main__":
