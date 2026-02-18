@@ -7,12 +7,12 @@ def process_hogan_logic(df, nombre_evaluado, mapeo, min_obs):
     # 2. Identificamos la columna de relación (Posición 7, índice 6)
     col_relacion = df.columns[6]
     
-    # 3. SEPARACIÓN REAL: Autoevaluación vs Otros
-    # Buscamos específicamente la palabra que usas en el Sheet
+    # 3. SEPARACIÓN: Autoevaluación vs Otros
+    # Normalizamos para que no fallen espacios o mayúsculas
     es_auto = df_persona[col_relacion].astype(str).str.strip().str.lower() == 'autoevaluación'
     
     df_autoevaluacion = df_persona[es_auto]
-    df_otros = df_persona[~es_auto] # Todo lo que NO sea Autoevaluación
+    df_otros = df_persona[~es_auto] # Todo lo que NO es Autoevaluación
     
     resultados = []
     
@@ -22,22 +22,24 @@ def process_hogan_logic(df, nombre_evaluado, mapeo, min_obs):
         items_con_quorum = 0
         
         for n in items:
+            # Buscamos la columna que empieza con el número (ej: "1. ")
             col_pregunta = next((c for c in df.columns if c.startswith(f"{n}.")), None)
             
             if col_pregunta:
-                # Cálculo para Otros (Barra Naranja)
+                # CÁLCULO PARA OTROS (Barra Naranja)
                 if df_otros[col_pregunta].count() >= min_obs:
                     val_otros = pd.to_numeric(df_otros[col_pregunta], errors='coerce').mean()
-                    if pd.notnull(val_others):
-                        scores_otros.append(val_others)
+                    if pd.notnull(val_otros): # Corregido: val_otros (sin la 'h')
+                        scores_otros.append(val_otros)
                         items_con_quorum += 1
                 
-                # Cálculo para Autoevaluación (Barra Azul)
+                # CÁLCULO PARA AUTOEVALUACIÓN (Barra Azul)
                 if not df_autoevaluacion.empty:
                     val_auto = pd.to_numeric(df_autoevaluacion[col_pregunta].iloc[0], errors='coerce')
                     if pd.notnull(val_auto):
                         scores_auto.append(val_auto)
 
+        # Promedios finales por categoría
         cobertura = items_con_quorum / len(items)
         promedio_otros = sum(scores_otros) / len(scores_otros) if scores_otros else None
         promedio_auto = sum(scores_auto) / len(scores_auto) if scores_auto else None
@@ -59,7 +61,9 @@ def get_global_metrics(df, mapeo, min_obs):
     nombres = df['Nombre de la persona Evaluada'].unique()
     todos = []
     for n in nombres:
-        todos.append(process_hogan_logic(df, n, mapeo, min_obs))
+        # Evitamos nombres vacíos si los hay en el Sheet
+        if str(n).strip():
+            todos.append(process_hogan_logic(df, n, mapeo, min_obs))
     
     if not todos: return pd.DataFrame()
     
