@@ -21,9 +21,10 @@ def main():
         return
 
     # Mapeo de columnas por índice para evitar errores de nombres largos
-    COL_CORREO = df.columns[5]    # Tu Correo Electrónico
-    COL_NOMBRE_EVALUADOR = df.columns[1] # Tu Nombre (Evaluador)
-    COL_EVALUADO = df.columns[2]  # Nombre de la persona Evaluada
+    COL_CORREO = "Tu Correo Electrónico"
+    COL_NOMBRE_EVALUADOR = "Tu Nombre (Evaluador)"
+    COL_EVALUADO = "Nombre de la persona Evaluada"
+    COL_RELACION = "Tu relación con el evaluado"
     
     COL_FORTALEZAS = "¿Cuáles son las mayores fortalezas de esta persona?"
     COL_OPORTUNIDADES = "¿Cuáles son sus principales oportunidades de desarrollo?"
