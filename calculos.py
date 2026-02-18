@@ -1,3 +1,6 @@
+import pandas as pd
+from import_data import MAPEO_HOGAN, MIN_OBS
+
 def process_hogan_logic(df, nombre_lider):
     """Calcula promedios de ítems y dominios con validación de suficiencia."""
     df_persona = df[df['Nombre de la persona Evaluada'] == nombre_lider]
@@ -9,21 +12,18 @@ def process_hogan_logic(df, nombre_lider):
         items_val_others = []
         cols_val = []
         
-        # Validación de suficiencia por cada conducta
         for n in items:
             col = next((c for c in df.columns if c.startswith(f"{n}.")), None)
             if col and others_data[col].count() >= MIN_OBS:
                 items_val_others.append(others_data[col].mean())
                 cols_val.append(col)
 
-        # Agregación por Dominio
         total = len(items)
         n_obs = len(items_val_others)
         cobertura = n_obs / total
         
         if n_obs > 0:
             score_others = sum(items_val_others) / n_obs
-            # Alineación Self: solo promedia lo que Others pudo observar
             score_self = self_data[cols_val].mean(axis=1).iloc[0] if not self_data.empty and cols_val else None
             
             rows.append({
