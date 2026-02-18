@@ -33,37 +33,41 @@ def main():
 
     with tab1:
         st.header("Consulta de Resultados Individuales")
-        st.write("Introduce tu correo electrónico para acceder a tus resultados.")
+        st.write("Introduce tu correo electrónico para acceder a tu reporte integral.")
         
-        # CUADRO DE TEXTO PARA EL CORREO
         email_input = st.text_input("Correo electrónico:", placeholder="ejemplo@loguerkim.mx").strip()
-        btn_validar = st.button("Validar y Entrar")
+        btn_validar = st.button("Generar Mi Reporte")
 
         if btn_validar and email_input:
-            # BUSQUEDA: Filtramos donde el correo coincida (ignorando mayúsculas/minúsculas)
-            # Y donde la relación sea 'Self' para asegurar que es SU reporte
-            df_usuario = df[
-                (df[COL_CORREO].astype(str).str.lower() == email_input.lower()) & 
-                (df[COL_RELACION].astype(str).str.strip().str.lower() == 'self')
-            ]
+            email_buscado = email_input.lower()
             
-            if not df_usuario.empty:
-                nombre_usuario = df_usuario[COL_EVALUADO].iloc[0]
-                st.success(f"✅ Acceso concedido: {nombre_usuario}")
+            # PASO 1: Identificar a quién pertenece este correo
+            # Buscamos en toda la columna de correos para encontrar el nombre del evaluado
+            registro_usuario = df[df[COL_CORREO].astype(str).str.strip().str.lower() == email_buscado]
+            
+            if not registro_usuario.empty:
+                # Tomamos el nombre de la persona evaluada vinculada a ese correo
+                # (Usamos la columna de evaluado porque es la que agrupa todas sus respuestas)
+                nombre_usuario = registro_usuario[COL_EVALUADO].iloc[0]
+                
+                st.success(f"✅ Reporte generado para: {nombre_usuario}")
                 st.divider()
                 
-                # Ejecutar motor de cálculo para este usuario
+                # PASO 2: El motor 'process_hogan_logic' ya se encarga internamente de:
+                # - Filtrar todas las filas donde 'Nombre de la persona Evaluada' == nombre_usuario
+                # - Separar la fila de 'Autoevaluación' para la barra azul
+                # - Promediar el resto de evaluadores para la barra naranja
                 res = process_hogan_logic(df, nombre_usuario, MAPEO_HOGAN, MIN_OBS)
                 
-                # Visualización: Gráfica
+                # Gráfica
                 fig = go.Figure()
-                fig.add_trace(go.Bar(x=res['Categoría'], y=res['Autoevaluación (Self)'], name='Autoevaluación (Self)', marker_color='#1E40AF'))
-                fig.add_trace(go.Bar(x=res['Categoría'], y=res['Evaluaciones Recibidas (Others)'], name='Promedio Otros (Others)', marker_color='#F59E0B'))
+                fig.add_trace(go.Bar(x=res['Categoría'], y=res['Autoevaluación (Self)'], name='Mi Autoevaluación', marker_color='#1E40AF'))
+                fig.add_trace(go.Bar(x=res['Categoría'], y=res['Evaluaciones Recibidas (Others)'], name='Promedio de mis Evaluadores', marker_color='#F59E0B'))
                 fig.update_layout(yaxis_range=[1,7], barmode='group', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # Tabla de datos
-                st.subheader("Resultados por categoría")
+                # Tabla
+                st.subheader("Desglose por Categoría")
                 st.dataframe(
                     res.style.format({
                         "Cobertura": "{:.0%}", 
@@ -71,16 +75,13 @@ def main():
                         "Evaluaciones Recibidas (Others)": "{:.2f}", 
                         "Brecha (Gap)": "{:.2f}"
                     }), 
-                    hide_index=True,
-                    use_container_width=True
+                    hide_index=True, use_container_width=True
                 )
-                
                 render_glosario()
             else:
-                st.error("No se encontró ninguna autoevaluación (Self) vinculada a este correo. Por favor, verifica que el correo sea el mismo que registraste.")
+                st.error("No se encontró ningún registro asociado a este correo en la base de datos.")
 
     with tab2:
-        # Pestaña CEO (Mantiene la lógica de contraseña)
         st.header("Dashboard Administrativo")
         if 'ceo_auth' not in st.session_state: st.session_state['ceo_auth'] = False
 
@@ -115,7 +116,6 @@ def main():
                 st.subheader("💬 Feedback Cualitativo")
                 fb_df = df[df[COL_EVALUADO] == lider_sel][[COL_FORTALEZAS, COL_OPORTUNIDADES, COL_SOBREUTILIZADA]]
                 st.dataframe(fb_df.dropna(how='all'), use_container_width=True)
-                
                 render_glosario()
 
 if __name__ == "__main__":
