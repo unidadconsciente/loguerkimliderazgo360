@@ -61,8 +61,8 @@ def main():
                 
                 # Gráfica
                 fig = go.Figure()
-                fig.add_trace(go.Bar(x=res['Categoría'], y=res['Autoevaluación (Self)'], name='Mi Autoevaluación', marker_color='#1E40AF'))
-                fig.add_trace(go.Bar(x=res['Categoría'], y=res['Evaluaciones Recibidas (Others)'], name='Promedio de mis Evaluadores', marker_color='#F59E0B'))
+                fig.add_trace(go.Bar(x=res['Categoría'], y=res['Autoevaluación'], name='Mi Autoevaluación', marker_color='#1E40AF'))
+                fig.add_trace(go.Bar(x=res['Categoría'], y=res['Evaluaciones Recibidas'], name='Promedio de mis Evaluadores', marker_color='#F59E0B'))
                 fig.update_layout(yaxis_range=[1,7], barmode='group', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                 st.plotly_chart(fig, use_container_width=True)
                 
