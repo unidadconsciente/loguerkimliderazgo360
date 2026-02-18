@@ -1,0 +1,49 @@
+def render_ui_report(df, nombre):
+    """Genera la visualización de resultados."""
+    res_df = process_hogan_logic(df, nombre)
+    
+    # Preparar datos para Plotly (evitar errores con Nones)
+    pdf = res_df.copy()
+    for c in ["Self", "Others"]: pdf[c] = pd.to_numeric(pdf[c], errors="coerce")
+    
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=pdf['Dominio'], y=pdf['Self'], name='Self', marker_color='#1E40AF'))
+    fig.add_trace(go.Bar(x=pdf['Dominio'], y=pdf['Others'], name='Others', marker_color='#F59E0B'))
+    fig.update_layout(yaxis_range=[1,7], barmode='group', title=f"Perfil de {nombre}")
+    
+    st.plotly_chart(fig, use_container_width=True)
+    st.dataframe(res_df.style.format({"Cobertura": "{:.0%}"}), hide_index=True)
+
+def main():
+    st.set_page_config(page_title="Hogan 360 - Unidad Consciente", layout="wide")
+    
+    try:
+        data = get_drive_data()
+    except Exception as e:
+        st.error(f"Fallo en la conexión: {e}"); return
+
+    menu = st.sidebar.radio("Navegación", ["Mi Reporte Individual", "Dashboard CEO"])
+
+    if menu == "Mi Reporte Individual":
+        st.header("👤 Consulta tu Reporte")
+        email = st.text_input("Ingresa tu correo:")
+        if email:
+            match = data[data['Tu Correo Electrónico'] == email]
+            if not match.empty:
+                render_ui_report(data, match['Nombre de la persona Evaluada'].iloc[0])
+            else: st.warning("Correo no registrado.")
+
+    else:
+        st.header("📊 Panel de Control CEO")
+        if st.text_input("Contraseña Admin", type="password") == PASSWORD_CEO:
+            lideres = data['Nombre de la persona Evaluada'].unique()
+            sel = st.selectbox("Seleccionar Líder:", lideres)
+            if sel:
+                render_ui_report(data, sel)
+                st.divider()
+                st.subheader("Comentarios Cualitativos")
+                # Muestra las últimas 3 columnas de feedback abierto
+                st.dataframe(data[data['Nombre de la persona Evaluada'] == sel].iloc[:, -3:].dropna(how='all'))
+
+if __name__ == "__main__":
+    main()
