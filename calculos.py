@@ -1,60 +1,70 @@
 import pandas as pd
-from import_data import MAPEO_HOGAN, MIN_OBS
 
-import pandas as pd
-
-def process_hogan_logic(df, nombre_evaluado, mapeo, min_obs): # Añadidos argumentos
-    """Calcula métricas filtrando estrictamente por la persona evaluada."""
+def process_hogan_logic(df, nombre_evaluado, mapeo, min_obs):
+    # 1. Filtramos todo lo relacionado a la persona
     df_persona = df[df['Nombre de la persona Evaluada'] == nombre_evaluado]
     
-    self_row = df_persona[df_persona['Tu relación con el evaluado'] == 'Self']
-    others_data = df_persona[df_persona['Tu relación con el evaluado'] != 'Self']
+    # 2. Identificamos la columna de relación (Posición 7, índice 6)
+    col_relacion = df.columns[6]
+    
+    # 3. SEPARACIÓN REAL: Autoevaluación vs Otros
+    # Buscamos específicamente la palabra que usas en el Sheet
+    es_auto = df_persona[col_relacion].astype(str).str.strip().str.lower() == 'autoevaluación'
+    
+    df_autoevaluacion = df_persona[es_auto]
+    df_otros = df_persona[~es_auto] # Todo lo que NO sea Autoevaluación
     
     resultados = []
-    for dominio, items in mapeo.items(): # Usa el argumento mapeo
-        scores_others = []
-        scores_self = []
+    
+    for dominio, items in mapeo.items():
+        scores_otros = []
+        scores_auto = []
         items_con_quorum = 0
         
         for n in items:
-            col = next((c for c in df.columns if c.startswith(f"{n}.")), None)
-            if col:
-                if others_data[col].count() >= min_obs: # Usa el argumento min_obs
-                    scores_others.append(others_data[col].mean())
-                    items_con_quorum += 1
+            col_pregunta = next((c for c in df.columns if c.startswith(f"{n}.")), None)
+            
+            if col_pregunta:
+                # Cálculo para Otros (Barra Naranja)
+                if df_otros[col_pregunta].count() >= min_obs:
+                    val_otros = pd.to_numeric(df_otros[col_pregunta], errors='coerce').mean()
+                    if pd.notnull(val_others):
+                        scores_otros.append(val_others)
+                        items_con_quorum += 1
                 
-                if not self_row.empty:
-                    val_self = pd.to_numeric(self_row[col].iloc[0], errors='coerce')
-                    if pd.notnull(val_self):
-                        scores_self.append(val_self)
+                # Cálculo para Autoevaluación (Barra Azul)
+                if not df_autoevaluacion.empty:
+                    val_auto = pd.to_numeric(df_autoevaluacion[col_pregunta].iloc[0], errors='coerce')
+                    if pd.notnull(val_auto):
+                        scores_auto.append(val_auto)
 
         cobertura = items_con_quorum / len(items)
-        s_others = sum(scores_others)/len(scores_others) if scores_others else None
-        s_self = sum(scores_self)/len(scores_self) if scores_self else None
+        promedio_otros = sum(scores_otros) / len(scores_otros) if scores_otros else None
+        promedio_auto = sum(scores_auto) / len(scores_auto) if scores_auto else None
         
         calidad = "Sólido" if cobertura >= 0.8 else "Cautela" if cobertura >= 0.5 else "Insuficiente"
         
         resultados.append({
             "Categoría": dominio,
-            "Autoevaluación (Self)": round(s_self, 2) if s_self else None,
-            "Evaluaciones Recibidas (Others)": round(s_others, 2) if s_others else None,
-            "Brecha (Gap)": round(s_self - s_others, 2) if (s_self and s_others) else None,
+            "Autoevaluación": round(promedio_auto, 2) if promedio_auto else None,
+            "Evaluación de los demás": round(promedio_otros, 2) if promedio_otros else None,
+            "Brecha (Gap)": round(promedio_auto - promedio_otros, 2) if (promedio_auto and promedio_otros) else None,
             "Cobertura": cobertura,
             "Confiabilidad": calidad
         })
+        
     return pd.DataFrame(resultados)
 
-def get_global_metrics(df, mapeo, min_obs): # Añadidos argumentos
+def get_global_metrics(df, mapeo, min_obs):
     nombres = df['Nombre de la persona Evaluada'].unique()
-    todos_los_resultados = []
-    for nombre in nombres:
-        res = process_hogan_logic(df, nombre, mapeo, min_obs)
-        todos_los_resultados.append(res)
+    todos = []
+    for n in nombres:
+        todos.append(process_hogan_logic(df, n, mapeo, min_obs))
     
-    base_agregada = pd.concat(todos_los_resultados)
-    global_df = base_agregada.groupby("Categoría").agg({
-        "Autoevaluación (Self)": "mean",
-        "Evaluaciones Recibidas (Others)": "mean"
-    }).reset_index()
+    if not todos: return pd.DataFrame()
     
-    return global_df.round(2)
+    df_global = pd.concat(todos)
+    return df_global.groupby("Categoría").agg({
+        "Autoevaluación": "mean",
+        "Evaluación de los demás": "mean"
+    }).reset_index().round(2)
