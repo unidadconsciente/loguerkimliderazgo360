@@ -8,6 +8,12 @@ from import_data import PASSWORD_CEO, GLOSARIO, MAPEO_HOGAN, MIN_OBS
 def render_glosario():
     st.markdown("---")
     with st.expander("🔎 Glosario de términos y Metodología"):
+        # Mini resumen integrado
+        st.write("**Calidad:** Nivel de representatividad estadística.")
+        st.write("- 🟢 **Sólido (>80%):** Datos muy representativos y seguros.")
+        st.write("- 🟡 **Cautela (50-80%):** Información con huecos; usar como referencia parcial.")
+        st.write("- 🔴 **Insuficiente (<50%):** Base débil; promedios posiblemente sesgados.")
+        st.markdown("---")
         for term, desc in GLOSARIO.items():
             st.write(f"**{term}:** {desc}")
 
