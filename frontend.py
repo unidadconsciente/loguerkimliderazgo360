@@ -15,7 +15,7 @@ def render_glosario():
         st.write("- 🟡 **Cautela (50-80%):** Faltan respuestas; usar como guía parcial.")
         st.write("- 🔴 **Insuficiente (<50%):** Base débil; promedios posiblemente sesgados.")
         st.markdown("---")
-        st.write("### 📝 Definiciones Generales")
+       
         for term, desc in GLOSARIO.items():
             if term not in ["Calidad", "Cobertura"]:
                 st.write(f"**{term}:** {desc}")
