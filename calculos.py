@@ -7,50 +7,47 @@ def process_hogan_logic(df, nombre_evaluado, mapeo, min_obs=0):
     
     df_persona = df[df[col_evaluado_str].astype(str).str.strip().str.lower() == nombre_target]
     
-    es_auto = df_persona[col_relacion_str].astype(str).str.strip().str.lower() == 'autoevaluación'
-    df_auto = df_persona[es_auto]
-    df_otros = df_persona[~es_auto]
+    # Definición de Roles según tu imagen
+    roles = {
+        "Autoevaluación": "autoevaluación",
+        "Superior": "superior (yo soy su jefe)",
+        "Subordinado": "subordinado (él/ella es mi jefe)",
+        "Par": "par (colega del mismo nivel)"
+    }
     
     resultados = []
     for dominio, items in mapeo.items():
-        scores_otros = []
-        scores_auto = []
+        # Diccionario para guardar scores por rol
+        rol_scores = {r: [] for r in roles.keys()}
         items_con_datos = 0
         
         for n in items:
             col_pregunta = next((c for c in df.columns if c.startswith(f"{n}.")), None)
             if col_pregunta:
-                if not df_otros[col_pregunta].dropna().empty:
-                    val_o = pd.to_numeric(df_otros[col_pregunta], errors='coerce').mean()
-                    if pd.notnull(val_o):
-                        scores_otros.append(val_o)
-                        items_con_datos += 1
+                pregunta_tiene_datos = False
+                for rol_label, valor_buscado in roles.items():
+                    df_rol = df_persona[df_persona[col_relacion_str].astype(str).str.strip().str.lower() == valor_buscado]
+                    
+                    if not df_rol[col_pregunta].dropna().empty:
+                        val = pd.to_numeric(df_rol[col_pregunta], errors='coerce').mean()
+                        if pd.notnull(val):
+                            rol_scores[rol_label].append(val)
+                            pregunta_tiene_datos = True
                 
-                if not df_auto.empty:
-                    val_a = pd.to_numeric(df_auto[col_pregunta].iloc[0], errors='coerce')
-                    if pd.notnull(val_a):
-                        scores_auto.append(val_a)
+                if pregunta_tiene_datos:
+                    items_con_datos += 1
 
-        p_otros = sum(scores_otros) / len(scores_otros) if scores_otros else 0.0
-        p_auto = sum(scores_auto) / len(scores_auto) if scores_auto else 0.0
+        # Calculamos promedios finales por rol
+        res_row = {"Categoría": dominio}
+        for rol_label in roles.keys():
+            scores = rol_scores[rol_label]
+            res_row[rol_label] = round(sum(scores) / len(scores), 2) if scores else 0.0
+        
         cobertura = (items_con_datos / len(items)) if len(items) > 0 else 0
+        res_row["Cobertura"] = cobertura
+        res_row["Calidad"] = "Sólido" if cobertura >= 0.8 else "Cautela" if cobertura >= 0.5 else "Insuficiente"
         
-        # Lógica de Calidad solicitada
-        if cobertura >= 0.8:
-            calidad_txt = "Sólido"
-        elif cobertura >= 0.5:
-            calidad_txt = "Cautela"
-        else:
-            calidad_txt = "Insuficiente"
-        
-        resultados.append({
-            "Categoría": dominio,
-            "Autoevaluación": round(p_auto, 2),
-            "Evaluación de los demás": round(p_otros, 2),
-            "Brecha (Gap)": round(p_auto - p_otros, 2),
-            "Cobertura": cobertura,
-            "Calidad": calidad_txt
-        })
+        resultados.append(res_row)
         
     return pd.DataFrame(resultados)
 
@@ -59,7 +56,4 @@ def get_global_metrics(df, mapeo, min_obs=0):
     todos = [process_hogan_logic(df, n, mapeo, min_obs) for n in nombres]
     if not todos: return pd.DataFrame()
     df_global = pd.concat(todos)
-    return df_global.groupby("Categoría").agg({
-        "Autoevaluación": "mean",
-        "Evaluación de los demás": "mean"
-    }).reset_index().round(2)
+    return df_global.groupby("Categoría").mean(numeric_only=True).reset_index().round(2)
