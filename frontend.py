@@ -8,14 +8,24 @@ from import_data import PASSWORD_CEO, GLOSARIO, MAPEO_HOGAN, MIN_OBS
 def render_glosario():
     st.markdown("---")
     with st.expander("🔎 Glosario de términos y Metodología"):
-        # Mini resumen integrado
-        st.write("**Calidad:** Nivel de representatividad estadística.")
-        st.write("- 🟢 **Sólido (>80%):** Datos muy representativos y seguros.")
-        st.write("- 🟡 **Cautela (50-80%):** Información con huecos; usar como referencia parcial.")
-        st.write("- 🔴 **Insuficiente (<50%):** Base débil; promedios posiblemente sesgados.")
+        st.write("### 📊 Indicadores de Validez")
+        
+        # Explicación clara de Cobertura
+        st.write("**Cobertura:** Muestra qué tanto feedback recibiste en cada área. Es el porcentaje de conductas (preguntas) de esa categoría que tus evaluadores sí contestaron. Una cobertura alta significa que tus evaluadores tuvieron oportunidad de observarte en casi todos los comportamientos evaluados.")
+        
+        # Explicación unificada de Calidad
+        st.write("**Calidad:** Nivel de representatividad estadística basada en la cobertura.")
+        st.write("- 🟢 **Sólido (>80%):** Feedback completo. Puedes tomar decisiones con total seguridad.")
+        st.write("- 🟡 **Cautela (50-80%):** Faltan algunas respuestas; usa los datos como una guía parcial.")
+        st.write("- 🔴 **Insuficiente (<50%):** Base de datos débil. Los promedios podrían estar sesgados por pocas opiniones.")
+        
         st.markdown("---")
+        st.write("### 📝 Definiciones Generales")
+        # Aquí eliminamos 'Calidad' y 'Cobertura' del loop si ya están en el diccionario GLOSARIO 
+        # para que no se repitan abajo.
         for term, desc in GLOSARIO.items():
-            st.write(f"**{term}:** {desc}")
+            if term not in ["Calidad", "Cobertura"]:
+                st.write(f"**{term}:** {desc}")
 
 def main():
     st.set_page_config(page_title="Hogan 360 - Loguerkim", layout="wide")
