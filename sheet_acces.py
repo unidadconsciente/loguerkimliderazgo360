@@ -14,9 +14,6 @@ def get_drive_data():
     creds_dict = dict(st.secrets["gcp_service_account"])
     
     # LIMPIEZA TOTAL DE LA LLAVE
-    # 1. Convertimos los \n de texto en saltos de línea reales
-    # 2. Eliminamos espacios en blanco al inicio y final
-    # 3. Quitamos posibles comillas accidentales
     raw_key = creds_dict["private_key"]
     clean_key = raw_key.replace("\\n", "\n").strip().strip("'").strip('"')
     creds_dict["private_key"] = clean_key
@@ -36,3 +33,21 @@ def get_drive_data():
     except Exception as e:
         st.error(f"Error detallado en autenticación: {e}")
         raise e
+
+@st.cache_data(ttl=60)
+def get_accesos_data():
+    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    raw_key = creds_dict["private_key"]
+    creds_dict["private_key"] = raw_key.replace("\\n", "\n").strip().strip("'").strip('"')
+    
+    try:
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+        client = gspread.authorize(creds)
+        
+        # Se conecta específicamente a la pestaña Accesos
+        sheet = client.open_by_key(SHEET_ID).worksheet("Accesos") 
+        return pd.DataFrame(sheet.get_all_records())
+    except Exception as e:
+        st.error(f"Error cargando pestaña Accesos: {e}")
+        return pd.DataFrame()
