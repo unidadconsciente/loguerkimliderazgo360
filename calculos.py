@@ -57,3 +57,22 @@ def get_global_metrics(df, mapeo, min_obs=0):
     if not todos: return pd.DataFrame()
     df_global = pd.concat(todos)
     return df_global.groupby("Categoría").mean(numeric_only=True).reset_index().round(2)
+
+def get_anonymous_feedback(df, nombre_evaluado):
+    nombre_target = str(nombre_evaluado).strip().lower()
+    col_evaluado_str = "Nombre de la persona Evaluada"
+    
+    # Filtramos la base principal por el líder exacto
+    df_persona = df[df[col_evaluado_str].astype(str).str.strip().str.lower() == nombre_target]
+    
+    cols_cualitativas = [
+        "¿Cuáles son las mayores fortalezas de esta persona?",
+        "¿Cuáles son sus principales oportunidades de desarrollo?",
+        "¿Hay alguna fortaleza que esta persona esté sobreutilizando?"
+    ]
+    
+    # Extraemos estrictamente las columnas de texto
+    cols_finales = [c for c in cols_cualitativas if c in df_persona.columns]
+    
+    # Retornamos los datos eliminando filas que estén totalmente vacías (donde no respondieron nada)
+    return df_persona[cols_finales].dropna(how='all')
