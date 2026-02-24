@@ -74,5 +74,5 @@ def get_anonymous_feedback(df, nombre_evaluado):
     # Extraemos estrictamente las columnas de texto
     cols_finales = [c for c in cols_cualitativas if c in df_persona.columns]
     
-    # Retornamos los datos eliminando filas que estén totalmente vacías (donde no respondieron nada)
+    # Retornamos los datos eliminando filas que estén totalmente vacías
     return df_persona[cols_finales].dropna(how='all')
