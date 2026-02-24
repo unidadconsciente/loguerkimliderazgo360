@@ -43,12 +43,12 @@ def main():
     with tab1:
         st.header("Consulta de Resultados Individuales")
         
-        # --- INICIO DE CORRECCIÓN DE ESTADO DE SESIÓN (UX) ---
+        # Inicialización del estado de sesión
         if "user_auth" not in st.session_state:
             st.session_state["user_auth"] = False
             st.session_state["user_name"] = ""
 
-        # Si NO está autenticado, mostramos el login
+        # Vista de Login si no está autenticado
         if not st.session_state["user_auth"]:
             col1, col2 = st.columns(2)
             with col1:
@@ -63,7 +63,7 @@ def main():
                                        (df_accesos['Contraseña'].astype(str).str.strip() == pass_input)]
                     
                     if not match.empty:
-                        # Guardamos estado y nombre, forzamos recarga
+                        # Guardamos estado y forzamos recarga
                         st.session_state["user_auth"] = True
                         st.session_state["user_name"] = str(match['Nombre Evaluado'].iloc[0]).strip()
                         st.rerun()
@@ -72,7 +72,7 @@ def main():
                 else:
                     st.warning("Por favor ingresa ambos datos.")
 
-        # Si SÍ está autenticado, mostramos el reporte
+        # Vista del Reporte si SÍ está autenticado
         if st.session_state["user_auth"]:
             nombre_usuario = st.session_state["user_name"]
             
@@ -97,7 +97,7 @@ def main():
             
             st.dataframe(res.style.format({"Cobertura": "{:.0%}", "Autoevaluación": "{:.2f}", "Superior": "{:.2f}", "Par": "{:.2f}", "Subordinado": "{:.2f}"}), hide_index=True, use_container_width=True)
             
-            # --- EXTRACCIÓN DE COMENTARIOS ANÓNIMOS VISTA INDIVIDUAL ---
+            # --- EXTRACCIÓN DE COMENTARIOS ANÓNIMOS ---
             st.divider()
             st.subheader("🗣️ Comentarios Cualitativos")
             df_anonimo = get_anonymous_feedback(df, nombre_usuario)
@@ -107,7 +107,6 @@ def main():
                 st.info("No hay comentarios cualitativos para mostrar aún.")
             
             render_glosario()
-        # --- FIN DE CORRECCIÓN DE ESTADO DE SESIÓN (UX) ---
 
     with tab2:
         st.header("Dashboard Administrativo")
