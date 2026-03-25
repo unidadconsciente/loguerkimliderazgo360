@@ -1,5 +1,3 @@
-# frontend.py
-
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
@@ -52,6 +50,10 @@ def _pair_key(nombre: str, cargo: str) -> str:
     return f"{_norm(nombre)}|||{_norm(cargo)}"
 
 
+def _is_dg(cargo: str) -> bool:
+    return _norm(cargo) == "director general"
+
+
 def render_glosario():
     st.markdown("---")
     with st.expander("🔎 Glosario de términos y Metodología"):
@@ -99,14 +101,7 @@ def _prepare_respuestas(df_resp: pd.DataFrame, participantes: pd.DataFrame) -> p
     valid_keys = set(participantes["key"].tolist())
     df = df_resp.copy()
 
-    needed = [
-        COL_NOMBRE_EVALUADOR,
-        COL_CARGO_EVALUADOR,
-        COL_EVALUADO,
-        COL_CARGO_EVALUADO,
-        COL_RELACION,
-    ]
-    for col in needed:
+    for col in [COL_NOMBRE_EVALUADOR, COL_CARGO_EVALUADOR, COL_EVALUADO, COL_CARGO_EVALUADO, COL_RELACION]:
         if col not in df.columns:
             df[col] = ""
 
@@ -147,10 +142,14 @@ def build_tracking(df_resp: pd.DataFrame, df_part: pd.DataFrame):
     if participantes.empty:
         return pd.DataFrame(), pd.DataFrame(), {}
 
+    dg_rows = participantes[participantes["Cargo"].apply(_is_dg)]
+    dg_key = dg_rows.iloc[0]["key"] if not dg_rows.empty else None
+
+    # Resúmenes por evaluador
     done_auto = set()
-    done_sup = set()
-    done_sub = set()
-    done_par = set()
+    done_superior = set()
+    subordinate_targets = {}
+    other_relation_targets = {}
 
     for _, row in respuestas.iterrows():
         evaluador = row["evaluador_key"]
@@ -159,17 +158,23 @@ def build_tracking(df_resp: pd.DataFrame, df_part: pd.DataFrame):
 
         if evaluador == evaluado or rel == REL_AUTO:
             done_auto.add(evaluador)
-        elif rel == REL_SUPERIOR:
-            # Texto exacto del forms: "Subordinado (Él/Ella es mi jefe)"
-            # Eso significa que el evaluador está evaluando a su superior/jefe.
-            done_sup.add(evaluador)
-        else:
-            # Lo que no sea auto ni "mi jefe", lo tomamos como evaluación descendente.
-            done_sub.add(evaluador)
+            continue
+
+        if rel == REL_SUPERIOR:
+            # El evaluador está evaluando a su jefe
+            done_superior.add(evaluador)
+            continue
+
+        # Cualquier otra relación la tratamos como evaluación hacia abajo / otro tipo
+        subordinate_targets.setdefault(evaluador, set()).add(evaluado)
+        other_relation_targets.setdefault(evaluador, set()).add(evaluado)
 
     summary_all_rows = []
     summary_pending_rows = []
     details = {}
+
+    all_people = participantes.to_dict("records")
+    non_dg_keys = set(participantes.loc[participantes["key"] != dg_key, "key"].tolist()) if dg_key else set()
 
     for _, row in participantes.iterrows():
         nombre = row["Nombre"]
@@ -182,21 +187,38 @@ def build_tracking(df_resp: pd.DataFrame, df_part: pd.DataFrame):
         sub_flag = row["sub_flag"]
 
         auto_done = person_key in done_auto
-        sup_done = person_key in done_sup
-        sub_done = person_key in done_sub
-        par_done = person_key in done_par  # por ahora normalmente quedará False
+
+        # Superior
+        if sup_flag == "si":
+            superior_done = person_key in done_superior
+        else:
+            superior_done = False
+
+        # Par (estratégico por ahora)
+        par_done = False
+
+        # Subordinado
+        if sub_flag == "si":
+            if dg_key and person_key == dg_key:
+                # DG se considera completo solo si evaluó a todos los demás
+                sub_done = subordinate_targets.get(person_key, set()) >= non_dg_keys
+            else:
+                # Para futuro: si aplica, basta con detectar al menos una evaluación descendente
+                sub_done = len(subordinate_targets.get(person_key, set())) > 0
+        else:
+            sub_done = False
 
         row_all = {
             "Nombre": nombre,
             "Autopercepción": _display_for_ver_todo(auto_flag, auto_done),
-            "Superior": _display_for_ver_todo(sup_flag, sup_done),
+            "Superior": _display_for_ver_todo(sup_flag, superior_done),
             "Par": _display_for_ver_todo(par_flag, par_done),
             "Subordinado": _display_for_ver_todo(sub_flag, sub_done),
         }
         summary_all_rows.append(row_all)
 
         auto_pending = (auto_flag == "si" and not auto_done)
-        sup_pending = (sup_flag == "si" and not sup_done)
+        sup_pending = (sup_flag == "si" and not superior_done)
         sub_pending = (sub_flag == "si" and not sub_done)
 
         if auto_pending or sup_pending or sub_pending:
@@ -209,12 +231,21 @@ def build_tracking(df_resp: pd.DataFrame, df_part: pd.DataFrame):
                 }
             )
 
+        faltantes_sub = []
+        if sub_pending:
+            if dg_key and person_key == dg_key:
+                missing_keys = sorted(list(non_dg_keys - subordinate_targets.get(person_key, set())))
+                missing_names = participantes[participantes["key"].isin(missing_keys)][["Nombre", "Cargo"]].to_dict("records")
+                faltantes_sub = [f"{x['Nombre']} ({x['Cargo']})" for x in missing_names]
+            else:
+                faltantes_sub = ["Pendiente de evaluación descendente"]
+
         details[nombre] = {
             "cargo": cargo,
             "faltantes": {
                 "Autopercepción": [] if not auto_pending else [f"{nombre} ({cargo})"],
                 "Superior": [] if not sup_pending else ["Pendiente de evaluar a su jefe"],
-                "Subordinado": [] if not sub_pending else ["Pendiente de evaluación descendente"],
+                "Subordinado": faltantes_sub,
             }
         }
 
@@ -314,10 +345,11 @@ def main():
                 st.error("La pestaña Accesos debe tener columnas exactas: Nombre, Cargo, Contraseña.")
             else:
                 df_acc = df_accesos.copy()
-                for col in ["Nombre", "Cargo", "Contraseña"]:
-                    df_acc[col] = df_acc[col].astype(str).str.strip()
-
+                df_acc["Nombre"] = df_acc["Nombre"].astype(str).str.strip()
+                df_acc["Cargo"] = df_acc["Cargo"].astype(str).str.strip()
+                df_acc["Contraseña"] = df_acc["Contraseña"].astype(str).str.strip()
                 df_acc["label"] = df_acc["Nombre"] + " — " + df_acc["Cargo"]
+
                 labels = sorted(df_acc["label"].unique().tolist())
 
                 c1, c2 = st.columns(2)
@@ -389,11 +421,10 @@ def main():
     with tab2:
         st.header("Dashboard Administrativo")
 
-        col_btn, col_msg = st.columns([1, 3])
-        with col_btn:
-            if st.button("Sincronizar accesos"):
-                msg = sync_users()
-                st.info(msg)
+        if st.button("Sincronizar accesos"):
+            msg = sync_users()
+            st.cache_data.clear()
+            st.info(msg)
 
         if not st.session_state.get("ceo_auth", False):
             pw = st.text_input("Contraseña CEO:", type="password")
