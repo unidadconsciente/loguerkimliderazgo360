@@ -41,7 +41,6 @@ def _icon(done: bool) -> str:
 
 
 def _display_for_ver_todo(flag_mode: str, done: bool) -> str:
-    # Si no aplica, no debe salir en rojo.
     if flag_mode != "si":
         return "—"
     return _icon(done)
@@ -141,26 +140,24 @@ def build_tracking(df_resp: pd.DataFrame, df_part: pd.DataFrame):
     respuestas = _prepare_respuestas(df_resp, participantes)
 
     if participantes.empty:
-        return pd.DataFrame(), pd.DataFrame(), {}
+        return pd.DataFrame(), {}
 
-    dg_rows = participantes[participantes["Cargo"].apply(_is_dg)]
-    dg_cargo_key = dg_rows.iloc[0]["cargo_key"] if not dg_rows.empty else None
-
-    # ===== HECHO POR CARGO =====
     auto_done_by_cargo = set()
     superior_done_by_cargo = set()
     subordinado_done_by_cargo = set()
     par_done_by_cargo = set()
 
-    # Para Director General: nombres de personas que YA evaluó como jefe
-    dg_subordinados_evaluados = set()
+    # Solo para el detalle del Director General:
+    # personas que DG ya evaluó como subordinados
+    dg_evaluados = set()
 
     for _, row in respuestas.iterrows():
         evaluador_cargo = row["evaluador_cargo_key"]
         evaluado_cargo = row["evaluado_cargo_key"]
-        evaluado_nombre = row["evaluado_nombre_key"]
+        evaluado_nombre = _norm(row.get(COL_EVALUADO, ""))
         rel = row["rel_norm"]
 
+        # Autoevaluación
         if rel == REL_AUTO or (
             evaluador_cargo == evaluado_cargo
             and _norm(row.get(COL_NOMBRE_EVALUADOR, "")) == _norm(row.get(COL_EVALUADO, ""))
@@ -168,35 +165,35 @@ def build_tracking(df_resp: pd.DataFrame, df_part: pd.DataFrame):
             auto_done_by_cargo.add(evaluador_cargo)
             continue
 
-        # Si la persona evalúa a su jefe, eso cuenta para "Superior"
+        # Superior = la persona evaluó a su jefe
         if rel == REL_SUPERIOR:
             superior_done_by_cargo.add(evaluador_cargo)
             continue
 
-        # Si la persona evalúa a su subordinado, eso cuenta para "Subordinado"
+        # Subordinado = la persona evaluó a alguien que le reporta
         if rel == REL_SUBORDINADO:
             subordinado_done_by_cargo.add(evaluador_cargo)
 
-            # Regla especial actual: solo DG debe evaluar a todos
-            if dg_cargo_key and evaluador_cargo == dg_cargo_key and evaluado_cargo != dg_cargo_key:
-                dg_subordinados_evaluados.add(evaluado_nombre)
+            # Solo detalle DG
+            if _is_dg(row.get(COL_CARGO_EVALUADOR, "")) and not _is_dg(row.get(COL_CARGO_EVALUADO, "")):
+                dg_evaluados.add(evaluado_nombre)
             continue
 
+        # Par
         if rel.startswith(REL_PAR):
             par_done_by_cargo.add(evaluador_cargo)
             continue
 
-    summary_all_rows = []
-    summary_pending_rows = []
+    summary_rows = []
     details = {}
 
-    # Lista esperada de personas que DG debe evaluar
-    dg_expected_people = []
-    if dg_cargo_key:
-        dg_expected_people = participantes.loc[
-            participantes["cargo_key"] != dg_cargo_key,
-            ["Nombre", "Cargo", "nombre_key"],
-        ].drop_duplicates().to_dict("records")
+    # Personas que DG debería evaluar
+    expected_for_dg = participantes.loc[
+        ~participantes["Cargo"].apply(_is_dg),
+        ["Nombre", "Cargo"]
+    ].drop_duplicates().copy()
+
+    expected_for_dg["nombre_key"] = expected_for_dg["Nombre"].apply(_norm)
 
     for _, row in participantes.iterrows():
         nombre = row["Nombre"]
@@ -211,117 +208,80 @@ def build_tracking(df_resp: pd.DataFrame, df_part: pd.DataFrame):
         auto_done = cargo_key in auto_done_by_cargo if auto_flag == "si" else False
         superior_done = cargo_key in superior_done_by_cargo if sup_flag == "si" else False
         par_done = cargo_key in par_done_by_cargo if par_flag == "si" else False
-
-        # Regla general por cargo
         subordinado_done = cargo_key in subordinado_done_by_cargo if sub_flag == "si" else False
 
-        # Regla especial actual: solo Director General debe tener n-1
-        if sub_flag == "si" and dg_cargo_key and cargo_key == dg_cargo_key:
-            expected_names = {x["nombre_key"] for x in dg_expected_people}
-            subordinado_done = expected_names.issubset(dg_subordinados_evaluados)
+        faltantes_subordinado = []
 
-        row_all = {
-            "Nombre": nombre,
-            "Autoevaluación": _display_for_ver_todo(auto_flag, auto_done),
-            "Superior": _display_for_ver_todo(sup_flag, superior_done),
-            "Par": _display_for_ver_todo(par_flag, par_done),
-            "Subordinado": _display_for_ver_todo(sub_flag, subordinado_done),
-        }
-        summary_all_rows.append(row_all)
+        # Solo para DG: n-1
+        if _is_dg(cargo) and sub_flag == "si":
+            expected_names = set(expected_for_dg["nombre_key"].tolist())
+            faltantes_keys = expected_names - dg_evaluados
+            subordinado_done = len(faltantes_keys) == 0
 
-        auto_pending = (auto_flag == "si" and not auto_done)
-        sup_pending = (sup_flag == "si" and not superior_done)
-        par_pending = (par_flag == "si" and not par_done)
-        sub_pending = (sub_flag == "si" and not subordinado_done)
-
-        if auto_pending or sup_pending or par_pending or sub_pending:
-            summary_pending_rows.append(
-                {
-                    "Nombre": nombre,
-                    "Autoevaluación": _icon(not auto_pending),
-                    "Superior": _icon(not sup_pending),
-                    "Par": _icon(not par_pending),
-                    "Subordinado": _icon(not sub_pending),
-                }
+            faltantes_subordinado = (
+                expected_for_dg[expected_for_dg["nombre_key"].isin(faltantes_keys)]
+                .apply(lambda r: f"{r['Nombre']} ({r['Cargo']})", axis=1)
+                .tolist()
             )
 
-        faltantes_sub = []
-        if sub_pending:
-            if dg_cargo_key and cargo_key == dg_cargo_key:
-                expected_names = {x["nombre_key"] for x in dg_expected_people}
-                missing_names = expected_names - dg_subordinados_evaluados
-
-                missing_people = [
-                    f"{x['Nombre']} ({x['Cargo']})"
-                    for x in dg_expected_people
-                    if x["nombre_key"] in missing_names
-                ]
-                faltantes_sub = missing_people
-            else:
-                faltantes_sub = ["Pendiente de evaluación a subordinado"]
+        summary_rows.append(
+            {
+                "Nombre": nombre,
+                "Autoevaluación": _display_for_ver_todo(auto_flag, auto_done),
+                "Superior": _display_for_ver_todo(sup_flag, superior_done),
+                "Par": _display_for_ver_todo(par_flag, par_done),
+                "Subordinado": _display_for_ver_todo(sub_flag, subordinado_done),
+            }
+        )
 
         details[nombre] = {
             "cargo": cargo,
-            "faltantes": {
-                "Autoevaluación": [] if not auto_pending else [f"{nombre} ({cargo})"],
-                "Superior": [] if not sup_pending else ["Pendiente de evaluar a su superior"],
-                "Par": [] if not par_pending else ["Pendiente de evaluación de par"],
-                "Subordinado": faltantes_sub,
-            }
+            "faltantes_subordinado": faltantes_subordinado,
         }
 
-    df_all = pd.DataFrame(summary_all_rows)
-    df_pending = pd.DataFrame(summary_pending_rows)
-    return df_all, df_pending, details
+    df_all = pd.DataFrame(summary_rows)
+    return df_all, details
 
 
 def render_tracking_tables(df_respuestas: pd.DataFrame, df_participantes: pd.DataFrame, show_detail: bool):
     st.subheader("🧭 Encuestas faltantes")
 
-    df_all, df_pending, details = build_tracking(df_respuestas, df_participantes)
+    df_all, details = build_tracking(df_respuestas, df_participantes)
 
-    if df_all.empty and df_pending.empty:
+    if df_all.empty:
         st.warning(
             "Revisa la pestaña Participantes. Debe tener columnas exactas: "
             "Nombre, Cargo, Autoevaluación, Superior, Par, Subordinado."
         )
         return
 
-    vista = st.selectbox("Vista:", ["Ver todo", "Faltantes"], key=f"vista_{show_detail}")
+    st.dataframe(
+        df_all[["Nombre", "Autoevaluación", "Superior", "Par", "Subordinado"]],
+        hide_index=True,
+        use_container_width=True,
+    )
 
-    if vista == "Ver todo":
-        st.dataframe(
-            df_all[["Nombre", "Autoevaluación", "Superior", "Par", "Subordinado"]],
-            hide_index=True,
-            use_container_width=True,
-        )
-    else:
-        if df_pending.empty:
-            st.success("No hay faltantes en Autoevaluación, Superior, Par y Subordinado.")
-        else:
-            st.dataframe(
-                df_pending[["Nombre", "Autoevaluación", "Superior", "Par", "Subordinado"]],
-                hide_index=True,
-                use_container_width=True,
-            )
+    if show_detail:
+        st.markdown("### Detalle de subordinados pendientes")
 
-            if show_detail:
-                st.markdown("### Ver detalle")
-                for _, row in df_pending.iterrows():
-                    nombre = row["Nombre"]
-                    info = details.get(nombre, {})
-                    cargo = info.get("cargo", "")
-                    faltantes = info.get("faltantes", {})
+        dg_rows = df_participantes[df_participantes["Cargo"].astype(str).apply(_is_dg)]
+        if dg_rows.empty:
+            st.info("No se encontró ningún Director General en la pestaña Participantes.")
+            return
 
-                    with st.expander(f"{nombre} — {cargo}"):
-                        for bloque in ["Autoevaluación", "Superior", "Par", "Subordinado"]:
-                            st.write(f"**{bloque}:**")
-                            items = faltantes.get(bloque, [])
-                            if items:
-                                for item in items:
-                                    st.write(f"- {item}")
-                            else:
-                                st.write("- Completo")
+        for _, dg_row in dg_rows.iterrows():
+            dg_nombre = str(dg_row["Nombre"]).strip()
+            dg_cargo = str(dg_row["Cargo"]).strip()
+            info = details.get(dg_nombre, {})
+            faltantes = info.get("faltantes_subordinado", [])
+
+            with st.expander(f"{dg_nombre} — {dg_cargo}"):
+                if faltantes:
+                    st.write("**Le falta evaluar a:**")
+                    for item in faltantes:
+                        st.write(f"- {item}")
+                else:
+                    st.success("Completó la evaluación de todos sus subordinados.")
 
 
 def main():
