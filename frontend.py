@@ -185,6 +185,51 @@ def build_tracking(df_resp: pd.DataFrame, df_part: pd.DataFrame):
     return summary, details
 
 
+def render_tracking_table(df_respuestas: pd.DataFrame, df_participantes: pd.DataFrame, show_detail: bool):
+    st.subheader("🧭 Encuestas faltantes")
+
+    if df_participantes.empty:
+        st.warning("Crea la pestaña Participantes con columnas Nombre y Cargo.")
+        return
+
+    tracking_df, tracking_details = build_tracking(df_respuestas, df_participantes)
+
+    if tracking_df.empty:
+        st.warning("No se pudo construir la tabla de seguimiento. Revisa Participantes.")
+        return
+
+    vista = st.selectbox("Vista:", ["Ver todo", "Ver pendientes"], key=f"vista_tracking_{show_detail}")
+
+    if vista == "Ver pendientes":
+        tracking_view = tracking_df[tracking_df["_has_pending"]].copy()
+    else:
+        tracking_view = tracking_df.copy()
+
+    st.dataframe(
+        tracking_view[["Nombre", "Autopercepción", "Superior", "Par", "Subordinado"]],
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    if show_detail:
+        st.markdown("### Ver detalle")
+        for _, row in tracking_view.iterrows():
+            nombre = row["Nombre"]
+            info = tracking_details.get(nombre, {})
+            cargo = info.get("cargo", "")
+            faltantes = info.get("faltantes", {})
+
+            with st.expander(f"{nombre} — {cargo}"):
+                for bloque in ["Autopercepción", "Superior", "Par", "Subordinado"]:
+                    st.write(f"**{bloque}:**")
+                    items = faltantes.get(bloque, [])
+                    if items:
+                        for item in items:
+                            st.write(f"- {item}")
+                    else:
+                        st.write("- Completo")
+
+
 def main():
     st.set_page_config(page_title="Hogan 360 - Loguerkim", layout="wide")
 
@@ -213,7 +258,11 @@ def main():
         st.error(f"Error de conexión: {e}")
         return
 
-    tab1, tab2 = st.tabs(["👤 Mi Reporte Individual", "📊 Dashboard CEO"])
+    tab1, tab2, tab3 = st.tabs([
+        "👤 Mi Reporte Individual",
+        "📊 Dashboard CEO",
+        "📋 Encuestas faltantes",
+    ])
 
     with tab1:
         if "user_auth" not in st.session_state:
@@ -334,45 +383,7 @@ def main():
             st.table(glob)
 
             st.divider()
-            st.subheader("🧭 Encuestas faltantes")
-
-            if df_participantes.empty:
-                st.warning("Crea la pestaña Participantes con columnas Nombre y Cargo.")
-            else:
-                tracking_df, tracking_details = build_tracking(df, df_participantes)
-
-                if tracking_df.empty:
-                    st.warning("No se pudo construir la tabla de seguimiento. Revisa Participantes.")
-                else:
-                    vista = st.selectbox("Vista:", ["Ver todo", "Ver pendientes"])
-
-                    if vista == "Ver pendientes":
-                        tracking_view = tracking_df[tracking_df["_has_pending"]].copy()
-                    else:
-                        tracking_view = tracking_df.copy()
-
-                    st.dataframe(
-                        tracking_view[["Nombre", "Autopercepción", "Superior", "Par", "Subordinado"]],
-                        hide_index=True,
-                        use_container_width=True,
-                    )
-
-                    st.markdown("### Ver detalle")
-                    for _, row in tracking_view.iterrows():
-                        nombre = row["Nombre"]
-                        info = tracking_details.get(nombre, {})
-                        cargo = info.get("cargo", "")
-                        faltantes = info.get("faltantes", {})
-
-                        with st.expander(f"{nombre} — {cargo}"):
-                            for bloque in ["Autopercepción", "Superior", "Par", "Subordinado"]:
-                                st.write(f"**{bloque}:**")
-                                items = faltantes.get(bloque, [])
-                                if items:
-                                    for item in items:
-                                        st.write(f"- {item}")
-                                else:
-                                    st.write("- Completo")
+            render_tracking_table(df, df_participantes, show_detail=True)
 
             st.divider()
             st.subheader("🔍 Auditoría por Líder")
@@ -411,6 +422,9 @@ def main():
                 st.dataframe(get_anonymous_feedback(df, lider_sel), use_container_width=True, hide_index=True)
 
             render_glosario()
+
+    with tab3:
+        render_tracking_table(df, df_participantes, show_detail=False)
 
 
 if __name__ == "__main__":
