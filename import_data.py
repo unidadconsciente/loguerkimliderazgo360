@@ -2,7 +2,7 @@ import streamlit as st
 
 SHEET_ID = "1MTuLBBk_-l5QRffFEktVZG_6pFwvl4SfshKTgVkd09s"
 MIN_OBS = 3  
-PASSWORD_CEO = "Liderazgo2026"
+PASSWORD_CEO = "Loguerkimliderazgo2026"
 
 # Mapeo oficial
 MAPEO_HOGAN = {
