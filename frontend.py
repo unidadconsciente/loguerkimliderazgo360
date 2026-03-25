@@ -15,8 +15,10 @@ COL_EVALUADO = "Nombre de la persona Evaluada"
 COL_CARGO_EVALUADO = "Cargo del Evaluado"
 COL_RELACION = "Tu relación con el evaluado"
 
-REL_AUTO = "autoevaluación"
-REL_SUPERIOR = "subordinado (él/ella es mi jefe)"
+REL_AUTO = "autoevaluacion"
+REL_SUPERIOR = "subordinado (el/ella es mi jefe)"
+REL_SUBORDINADO = "superior (yo soy su jefe)"
+REL_PAR = "par"
 
 
 def _norm(value: str) -> str:
@@ -39,10 +41,9 @@ def _icon(done: bool) -> str:
 
 
 def _display_for_ver_todo(flag_mode: str, done: bool) -> str:
-    if flag_mode == "na":
+    # Si no aplica, no debe salir en rojo.
+    if flag_mode != "si":
         return "—"
-    if flag_mode == "no":
-        return "❌"
     return _icon(done)
 
 
@@ -85,6 +86,9 @@ def _prepare_participantes(df_part: pd.DataFrame) -> pd.DataFrame:
         part[col] = part[col].astype(str).str.strip()
 
     part["key"] = part.apply(lambda r: _pair_key(r["Nombre"], r["Cargo"]), axis=1)
+    part["cargo_key"] = part["Cargo"].apply(_norm)
+    part["nombre_key"] = part["Nombre"].apply(_norm)
+
     part["auto_flag"] = part["Autoevaluación"].apply(_flag_to_mode)
     part["sup_flag"] = part["Superior"].apply(_flag_to_mode)
     part["par_flag"] = part["Par"].apply(_flag_to_mode)
@@ -98,7 +102,6 @@ def _prepare_respuestas(df_resp: pd.DataFrame, participantes: pd.DataFrame) -> p
     if df_resp.empty or participantes.empty:
         return pd.DataFrame()
 
-    valid_keys = set(participantes["key"].tolist())
     df = df_resp.copy()
 
     for col in [COL_NOMBRE_EVALUADOR, COL_CARGO_EVALUADOR, COL_EVALUADO, COL_CARGO_EVALUADO, COL_RELACION]:
@@ -113,12 +116,10 @@ def _prepare_respuestas(df_resp: pd.DataFrame, participantes: pd.DataFrame) -> p
         lambda r: _pair_key(r.get(COL_EVALUADO, ""), r.get(COL_CARGO_EVALUADO, "")),
         axis=1,
     )
+    df["evaluador_cargo_key"] = df[COL_CARGO_EVALUADOR].apply(_norm)
+    df["evaluado_cargo_key"] = df[COL_CARGO_EVALUADO].apply(_norm)
+    df["evaluado_nombre_key"] = df[COL_EVALUADO].apply(_norm)
     df["rel_norm"] = df[COL_RELACION].apply(_norm)
-
-    df = df[
-        df["evaluador_key"].isin(valid_keys) &
-        df["evaluado_key"].isin(valid_keys)
-    ].copy()
 
     if "Timestamp" in df.columns:
         df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
@@ -143,108 +144,128 @@ def build_tracking(df_resp: pd.DataFrame, df_part: pd.DataFrame):
         return pd.DataFrame(), pd.DataFrame(), {}
 
     dg_rows = participantes[participantes["Cargo"].apply(_is_dg)]
-    dg_key = dg_rows.iloc[0]["key"] if not dg_rows.empty else None
+    dg_cargo_key = dg_rows.iloc[0]["cargo_key"] if not dg_rows.empty else None
 
-    # Resúmenes por evaluador
-    done_auto = set()
-    done_superior = set()
-    subordinate_targets = {}
-    other_relation_targets = {}
+    # ===== HECHO POR CARGO =====
+    auto_done_by_cargo = set()
+    superior_done_by_cargo = set()
+    subordinado_done_by_cargo = set()
+    par_done_by_cargo = set()
+
+    # Para Director General: nombres de personas que YA evaluó como jefe
+    dg_subordinados_evaluados = set()
 
     for _, row in respuestas.iterrows():
-        evaluador = row["evaluador_key"]
-        evaluado = row["evaluado_key"]
+        evaluador_cargo = row["evaluador_cargo_key"]
+        evaluado_cargo = row["evaluado_cargo_key"]
+        evaluado_nombre = row["evaluado_nombre_key"]
         rel = row["rel_norm"]
 
-        if evaluador == evaluado or rel == REL_AUTO:
-            done_auto.add(evaluador)
+        if rel == REL_AUTO or (
+            evaluador_cargo == evaluado_cargo
+            and _norm(row.get(COL_NOMBRE_EVALUADOR, "")) == _norm(row.get(COL_EVALUADO, ""))
+        ):
+            auto_done_by_cargo.add(evaluador_cargo)
             continue
 
+        # Si la persona evalúa a su jefe, eso cuenta para "Superior"
         if rel == REL_SUPERIOR:
-            # El evaluador está evaluando a su jefe
-            done_superior.add(evaluador)
+            superior_done_by_cargo.add(evaluador_cargo)
             continue
 
-        # Cualquier otra relación la tratamos como evaluación hacia abajo / otro tipo
-        subordinate_targets.setdefault(evaluador, set()).add(evaluado)
-        other_relation_targets.setdefault(evaluador, set()).add(evaluado)
+        # Si la persona evalúa a su subordinado, eso cuenta para "Subordinado"
+        if rel == REL_SUBORDINADO:
+            subordinado_done_by_cargo.add(evaluador_cargo)
+
+            # Regla especial actual: solo DG debe evaluar a todos
+            if dg_cargo_key and evaluador_cargo == dg_cargo_key and evaluado_cargo != dg_cargo_key:
+                dg_subordinados_evaluados.add(evaluado_nombre)
+            continue
+
+        if rel.startswith(REL_PAR):
+            par_done_by_cargo.add(evaluador_cargo)
+            continue
 
     summary_all_rows = []
     summary_pending_rows = []
     details = {}
 
-    all_people = participantes.to_dict("records")
-    non_dg_keys = set(participantes.loc[participantes["key"] != dg_key, "key"].tolist()) if dg_key else set()
+    # Lista esperada de personas que DG debe evaluar
+    dg_expected_people = []
+    if dg_cargo_key:
+        dg_expected_people = participantes.loc[
+            participantes["cargo_key"] != dg_cargo_key,
+            ["Nombre", "Cargo", "nombre_key"],
+        ].drop_duplicates().to_dict("records")
 
     for _, row in participantes.iterrows():
         nombre = row["Nombre"]
         cargo = row["Cargo"]
-        person_key = row["key"]
+        cargo_key = row["cargo_key"]
 
         auto_flag = row["auto_flag"]
         sup_flag = row["sup_flag"]
         par_flag = row["par_flag"]
         sub_flag = row["sub_flag"]
 
-        auto_done = person_key in done_auto
+        auto_done = cargo_key in auto_done_by_cargo if auto_flag == "si" else False
+        superior_done = cargo_key in superior_done_by_cargo if sup_flag == "si" else False
+        par_done = cargo_key in par_done_by_cargo if par_flag == "si" else False
 
-        # Superior
-        if sup_flag == "si":
-            superior_done = person_key in done_superior
-        else:
-            superior_done = False
+        # Regla general por cargo
+        subordinado_done = cargo_key in subordinado_done_by_cargo if sub_flag == "si" else False
 
-        # Par (estratégico por ahora)
-        par_done = False
-
-        # Subordinado
-        if sub_flag == "si":
-            if dg_key and person_key == dg_key:
-                # DG se considera completo solo si evaluó a todos los demás
-                sub_done = subordinate_targets.get(person_key, set()) >= non_dg_keys
-            else:
-                # Para futuro: si aplica, basta con detectar al menos una evaluación descendente
-                sub_done = len(subordinate_targets.get(person_key, set())) > 0
-        else:
-            sub_done = False
+        # Regla especial actual: solo Director General debe tener n-1
+        if sub_flag == "si" and dg_cargo_key and cargo_key == dg_cargo_key:
+            expected_names = {x["nombre_key"] for x in dg_expected_people}
+            subordinado_done = expected_names.issubset(dg_subordinados_evaluados)
 
         row_all = {
             "Nombre": nombre,
-            "Autopercepción": _display_for_ver_todo(auto_flag, auto_done),
+            "Autoevaluación": _display_for_ver_todo(auto_flag, auto_done),
             "Superior": _display_for_ver_todo(sup_flag, superior_done),
             "Par": _display_for_ver_todo(par_flag, par_done),
-            "Subordinado": _display_for_ver_todo(sub_flag, sub_done),
+            "Subordinado": _display_for_ver_todo(sub_flag, subordinado_done),
         }
         summary_all_rows.append(row_all)
 
         auto_pending = (auto_flag == "si" and not auto_done)
         sup_pending = (sup_flag == "si" and not superior_done)
-        sub_pending = (sub_flag == "si" and not sub_done)
+        par_pending = (par_flag == "si" and not par_done)
+        sub_pending = (sub_flag == "si" and not subordinado_done)
 
-        if auto_pending or sup_pending or sub_pending:
+        if auto_pending or sup_pending or par_pending or sub_pending:
             summary_pending_rows.append(
                 {
                     "Nombre": nombre,
-                    "Autopercepción": _icon(not auto_pending),
+                    "Autoevaluación": _icon(not auto_pending),
                     "Superior": _icon(not sup_pending),
+                    "Par": _icon(not par_pending),
                     "Subordinado": _icon(not sub_pending),
                 }
             )
 
         faltantes_sub = []
         if sub_pending:
-            if dg_key and person_key == dg_key:
-                missing_keys = sorted(list(non_dg_keys - subordinate_targets.get(person_key, set())))
-                missing_names = participantes[participantes["key"].isin(missing_keys)][["Nombre", "Cargo"]].to_dict("records")
-                faltantes_sub = [f"{x['Nombre']} ({x['Cargo']})" for x in missing_names]
+            if dg_cargo_key and cargo_key == dg_cargo_key:
+                expected_names = {x["nombre_key"] for x in dg_expected_people}
+                missing_names = expected_names - dg_subordinados_evaluados
+
+                missing_people = [
+                    f"{x['Nombre']} ({x['Cargo']})"
+                    for x in dg_expected_people
+                    if x["nombre_key"] in missing_names
+                ]
+                faltantes_sub = missing_people
             else:
-                faltantes_sub = ["Pendiente de evaluación descendente"]
+                faltantes_sub = ["Pendiente de evaluación a subordinado"]
 
         details[nombre] = {
             "cargo": cargo,
             "faltantes": {
-                "Autopercepción": [] if not auto_pending else [f"{nombre} ({cargo})"],
-                "Superior": [] if not sup_pending else ["Pendiente de evaluar a su jefe"],
+                "Autoevaluación": [] if not auto_pending else [f"{nombre} ({cargo})"],
+                "Superior": [] if not sup_pending else ["Pendiente de evaluar a su superior"],
+                "Par": [] if not par_pending else ["Pendiente de evaluación de par"],
                 "Subordinado": faltantes_sub,
             }
         }
@@ -270,16 +291,16 @@ def render_tracking_tables(df_respuestas: pd.DataFrame, df_participantes: pd.Dat
 
     if vista == "Ver todo":
         st.dataframe(
-            df_all[["Nombre", "Autopercepción", "Superior", "Par", "Subordinado"]],
+            df_all[["Nombre", "Autoevaluación", "Superior", "Par", "Subordinado"]],
             hide_index=True,
             use_container_width=True,
         )
     else:
         if df_pending.empty:
-            st.success("No hay faltantes en Autoevaluación, Superior y Subordinado.")
+            st.success("No hay faltantes en Autoevaluación, Superior, Par y Subordinado.")
         else:
             st.dataframe(
-                df_pending[["Nombre", "Autopercepción", "Superior", "Subordinado"]],
+                df_pending[["Nombre", "Autoevaluación", "Superior", "Par", "Subordinado"]],
                 hide_index=True,
                 use_container_width=True,
             )
@@ -293,7 +314,7 @@ def render_tracking_tables(df_respuestas: pd.DataFrame, df_participantes: pd.Dat
                     faltantes = info.get("faltantes", {})
 
                     with st.expander(f"{nombre} — {cargo}"):
-                        for bloque in ["Autopercepción", "Superior", "Subordinado"]:
+                        for bloque in ["Autoevaluación", "Superior", "Par", "Subordinado"]:
                             st.write(f"**{bloque}:**")
                             items = faltantes.get(bloque, [])
                             if items:
