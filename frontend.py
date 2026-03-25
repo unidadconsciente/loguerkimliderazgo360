@@ -8,6 +8,7 @@ import unicodedata
 from sheet_acces import get_drive_data, get_accesos_data, get_participantes_data
 from calculos import process_hogan_logic, get_global_metrics, get_anonymous_feedback
 from import_data import PASSWORD_CEO, GLOSARIO, MAPEO_HOGAN
+from sync_accesos import sync_users
 
 
 COL_NOMBRE_EVALUADOR = "Tu Nombre (Evaluador)"
@@ -55,7 +56,10 @@ def render_glosario():
     st.markdown("---")
     with st.expander("🔎 Glosario de términos y Metodología"):
         st.write("### 📊 Indicadores de Validez")
-        st.write("**Cobertura:** Muestra qué tanto feedback recibiste en cada área. Es el porcentaje de conductas (preguntas) de esa categoría que tus evaluadores sí contestaron.")
+        st.write(
+            "**Cobertura:** Muestra qué tanto feedback recibiste en cada área. "
+            "Es el porcentaje de conductas (preguntas) de esa categoría que tus evaluadores sí contestaron."
+        )
         st.write("**Calidad:** Nivel de representatividad estadística basada en la cobertura.")
         st.write("- 🟢 **Sólido (>80%):** Feedback completo. Datos seguros.")
         st.write("- 🟡 **Cautela (50-80%):** Faltan respuestas; usar como guía parcial.")
@@ -156,10 +160,11 @@ def build_tracking(df_resp: pd.DataFrame, df_part: pd.DataFrame):
         if evaluador == evaluado or rel == REL_AUTO:
             done_auto.add(evaluador)
         elif rel == REL_SUPERIOR:
+            # Texto exacto del forms: "Subordinado (Él/Ella es mi jefe)"
+            # Eso significa que el evaluador está evaluando a su superior/jefe.
             done_sup.add(evaluador)
         else:
-            # Cualquier otra relación distinta a auto y a "mi jefe" la dejamos como descendente/par.
-            # Hoy la usaremos para Subordinado; Par se mantiene estratégico desde Participantes.
+            # Lo que no sea auto ni "mi jefe", lo tomamos como evaluación descendente.
             done_sub.add(evaluador)
 
     summary_all_rows = []
@@ -179,16 +184,16 @@ def build_tracking(df_resp: pd.DataFrame, df_part: pd.DataFrame):
         auto_done = person_key in done_auto
         sup_done = person_key in done_sup
         sub_done = person_key in done_sub
-        par_done = False  # estratégico por ahora; se controla desde Participantes
+        par_done = person_key in done_par  # por ahora normalmente quedará False
 
-        ver_todo_row = {
+        row_all = {
             "Nombre": nombre,
             "Autopercepción": _display_for_ver_todo(auto_flag, auto_done),
             "Superior": _display_for_ver_todo(sup_flag, sup_done),
             "Par": _display_for_ver_todo(par_flag, par_done),
             "Subordinado": _display_for_ver_todo(sub_flag, sub_done),
         }
-        summary_all_rows.append(ver_todo_row)
+        summary_all_rows.append(row_all)
 
         auto_pending = (auto_flag == "si" and not auto_done)
         sup_pending = (sup_flag == "si" and not sup_done)
@@ -225,7 +230,7 @@ def render_tracking_tables(df_respuestas: pd.DataFrame, df_participantes: pd.Dat
 
     if df_all.empty and df_pending.empty:
         st.warning(
-            "Revisa la pestaña Participantes. Debe tener estas columnas exactas: "
+            "Revisa la pestaña Participantes. Debe tener columnas exactas: "
             "Nombre, Cargo, Autoevaluación, Superior, Par, Subordinado."
         )
         return
@@ -313,7 +318,6 @@ def main():
                     df_acc[col] = df_acc[col].astype(str).str.strip()
 
                 df_acc["label"] = df_acc["Nombre"] + " — " + df_acc["Cargo"]
-
                 labels = sorted(df_acc["label"].unique().tolist())
 
                 c1, c2 = st.columns(2)
@@ -384,6 +388,12 @@ def main():
 
     with tab2:
         st.header("Dashboard Administrativo")
+
+        col_btn, col_msg = st.columns([1, 3])
+        with col_btn:
+            if st.button("Sincronizar accesos"):
+                msg = sync_users()
+                st.info(msg)
 
         if not st.session_state.get("ceo_auth", False):
             pw = st.text_input("Contraseña CEO:", type="password")
