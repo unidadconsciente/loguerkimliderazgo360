@@ -1,5 +1,3 @@
-# sheet_acces.py
-
 import streamlit as st
 import pandas as pd
 import gspread
@@ -24,26 +22,38 @@ def _get_client():
 
 @st.cache_data(ttl=600)
 def get_drive_data():
-    client = _get_client()
-    sheet = client.open_by_key(SHEET_ID).sheet1
-    df = pd.DataFrame(sheet.get_all_records())
+    try:
+        client = _get_client()
+        sheet = client.open_by_key(SHEET_ID).sheet1
+        df = pd.DataFrame(sheet.get_all_records())
 
-    for col in df.columns:
-        if str(col).split(".")[0].strip().isdigit():
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+        for col in df.columns:
+            if str(col).split(".")[0].strip().isdigit():
+                df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    return df
+        return df
+    except Exception as e:
+        st.error(f"Error detallado en autenticación: {e}")
+        raise e
 
 
 @st.cache_data(ttl=60)
 def get_accesos_data():
-    client = _get_client()
-    sheet = client.open_by_key(SHEET_ID).worksheet("Accesos")
-    return pd.DataFrame(sheet.get_all_records())
+    try:
+        client = _get_client()
+        sheet = client.open_by_key(SHEET_ID).worksheet("Accesos")
+        return pd.DataFrame(sheet.get_all_records())
+    except Exception as e:
+        st.error(f"Error cargando pestaña Accesos: {e}")
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=60)
 def get_participantes_data():
-    client = _get_client()
-    sheet = client.open_by_key(SHEET_ID).worksheet("Participantes")
-    return pd.DataFrame(sheet.get_all_records())
+    try:
+        client = _get_client()
+        sheet = client.open_by_key(SHEET_ID).worksheet("Participantes")
+        return pd.DataFrame(sheet.get_all_records())
+    except Exception as e:
+        st.error(f"Error cargando pestaña Participantes: {e}")
+        return pd.DataFrame()
