@@ -97,8 +97,8 @@ def _prepare_participantes(df_part: pd.DataFrame) -> pd.DataFrame:
     return part
 
 
-def _prepare_respuestas(df_resp: pd.DataFrame, participantes: pd.DataFrame) -> pd.DataFrame:
-    if df_resp.empty or participantes.empty:
+def _prepare_respuestas(df_resp: pd.DataFrame) -> pd.DataFrame:
+    if df_resp.empty:
         return pd.DataFrame()
 
     df = df_resp.copy()
@@ -106,6 +106,12 @@ def _prepare_respuestas(df_resp: pd.DataFrame, participantes: pd.DataFrame) -> p
     for col in [COL_NOMBRE_EVALUADOR, COL_CARGO_EVALUADOR, COL_EVALUADO, COL_CARGO_EVALUADO, COL_RELACION]:
         if col not in df.columns:
             df[col] = ""
+
+    df[COL_NOMBRE_EVALUADOR] = df[COL_NOMBRE_EVALUADOR].astype(str).str.strip()
+    df[COL_CARGO_EVALUADOR] = df[COL_CARGO_EVALUADOR].astype(str).str.strip()
+    df[COL_EVALUADO] = df[COL_EVALUADO].astype(str).str.strip()
+    df[COL_CARGO_EVALUADO] = df[COL_CARGO_EVALUADO].astype(str).str.strip()
+    df[COL_RELACION] = df[COL_RELACION].astype(str).str.strip()
 
     df["evaluador_key"] = df.apply(
         lambda r: _pair_key(r.get(COL_NOMBRE_EVALUADOR, ""), r.get(COL_CARGO_EVALUADOR, "")),
@@ -137,92 +143,90 @@ def _prepare_respuestas(df_resp: pd.DataFrame, participantes: pd.DataFrame) -> p
 
 def build_tracking(df_resp: pd.DataFrame, df_part: pd.DataFrame):
     participantes = _prepare_participantes(df_part)
-    respuestas = _prepare_respuestas(df_resp, participantes)
+    respuestas = _prepare_respuestas(df_resp)
 
     if participantes.empty:
         return pd.DataFrame(), {}
 
-    auto_done_by_cargo = set()
-    superior_done_by_cargo = set()
-    subordinado_done_by_cargo = set()
-    par_done_by_cargo = set()
-
-    # Solo para el detalle del Director General:
-    # personas que DG ya evaluó como subordinados
-    dg_evaluados = set()
-
-    for _, row in respuestas.iterrows():
-        evaluador_cargo = row["evaluador_cargo_key"]
-        evaluado_cargo = row["evaluado_cargo_key"]
-        evaluado_nombre = _norm(row.get(COL_EVALUADO, ""))
-        rel = row["rel_norm"]
-
-        # Autoevaluación
-        if rel == REL_AUTO or (
-            evaluador_cargo == evaluado_cargo
-            and _norm(row.get(COL_NOMBRE_EVALUADOR, "")) == _norm(row.get(COL_EVALUADO, ""))
-        ):
-            auto_done_by_cargo.add(evaluador_cargo)
-            continue
-
-        # Superior = la persona evaluó a su jefe
-        if rel == REL_SUPERIOR:
-            superior_done_by_cargo.add(evaluador_cargo)
-            continue
-
-        # Subordinado = la persona evaluó a alguien que le reporta
-        if rel == REL_SUBORDINADO:
-            subordinado_done_by_cargo.add(evaluador_cargo)
-
-            # Solo detalle DG
-            if _is_dg(row.get(COL_CARGO_EVALUADOR, "")) and not _is_dg(row.get(COL_CARGO_EVALUADO, "")):
-                dg_evaluados.add(evaluado_nombre)
-            continue
-
-        # Par
-        if rel.startswith(REL_PAR):
-            par_done_by_cargo.add(evaluador_cargo)
-            continue
-
     summary_rows = []
     details = {}
-
-    # Personas que DG debería evaluar
-    expected_for_dg = participantes.loc[
-        ~participantes["Cargo"].apply(_is_dg),
-        ["Nombre", "Cargo"]
-    ].drop_duplicates().copy()
-
-    expected_for_dg["nombre_key"] = expected_for_dg["Nombre"].apply(_norm)
 
     for _, row in participantes.iterrows():
         nombre = row["Nombre"]
         cargo = row["Cargo"]
-        cargo_key = row["cargo_key"]
+        person_key = row["key"]
 
         auto_flag = row["auto_flag"]
         sup_flag = row["sup_flag"]
         par_flag = row["par_flag"]
         sub_flag = row["sub_flag"]
 
-        auto_done = cargo_key in auto_done_by_cargo if auto_flag == "si" else False
-        superior_done = cargo_key in superior_done_by_cargo if sup_flag == "si" else False
-        par_done = cargo_key in par_done_by_cargo if par_flag == "si" else False
-        subordinado_done = cargo_key in subordinado_done_by_cargo if sub_flag == "si" else False
-
+        auto_done = False
+        superior_done = False
+        par_done = False
+        subordinado_done = False
         faltantes_subordinado = []
 
-        # Solo para DG: n-1
-        if _is_dg(cargo) and sub_flag == "si":
-            expected_names = set(expected_for_dg["nombre_key"].tolist())
-            faltantes_keys = expected_names - dg_evaluados
-            subordinado_done = len(faltantes_keys) == 0
+        # AUTOEVALUACIÓN: por persona
+        if auto_flag == "si":
+            auto_done = not respuestas[
+                (respuestas["evaluador_key"] == person_key) &
+                (
+                    (respuestas["rel_norm"] == REL_AUTO) |
+                    (
+                        (respuestas["evaluador_key"] == respuestas["evaluado_key"])
+                    )
+                )
+            ].empty
 
-            faltantes_subordinado = (
-                expected_for_dg[expected_for_dg["nombre_key"].isin(faltantes_keys)]
-                .apply(lambda r: f"{r['Nombre']} ({r['Cargo']})", axis=1)
-                .tolist()
-            )
+        # SUPERIOR: si en Participantes dice "Sí",
+        # debe existir una respuesta de esa persona con relación "Subordinado (él/ella es mi jefe)"
+        if sup_flag == "si":
+            superior_done = not respuestas[
+                (respuestas["evaluador_key"] == person_key) &
+                (respuestas["rel_norm"] == REL_SUPERIOR)
+            ].empty
+
+        # PAR: por persona
+        if par_flag == "si":
+            par_done = not respuestas[
+                (respuestas["evaluador_key"] == person_key) &
+                (respuestas["rel_norm"].str.startswith(REL_PAR))
+            ].empty
+
+        # SUBORDINADO:
+        # regla general: si en Participantes dice "Sí", debe existir una respuesta
+        # de esa persona con relación "Superior (yo soy su jefe)"
+        if sub_flag == "si":
+            subordinado_done = not respuestas[
+                (respuestas["evaluador_key"] == person_key) &
+                (respuestas["rel_norm"] == REL_SUBORDINADO)
+            ].empty
+
+            # Regla especial actual: solo Director General debe evaluar a todos
+            if _is_dg(cargo):
+                expected_people = participantes.loc[
+                    participantes["cargo_key"] != _norm(cargo),
+                    ["Nombre", "Cargo", "nombre_key"],
+                ].drop_duplicates().copy()
+
+                hechas = respuestas[
+                    (respuestas["evaluador_key"] == person_key) &
+                    (respuestas["rel_norm"] == REL_SUBORDINADO) &
+                    (respuestas["evaluado_cargo_key"] != _norm(cargo))
+                ]["evaluado_nombre_key"].dropna().unique().tolist()
+
+                hechas_set = set(hechas)
+                expected_set = set(expected_people["nombre_key"].tolist())
+                faltantes_keys = expected_set - hechas_set
+
+                faltantes_subordinado = (
+                    expected_people[expected_people["nombre_key"].isin(faltantes_keys)]
+                    .apply(lambda r: f"{r['Nombre']} ({r['Cargo']})", axis=1)
+                    .tolist()
+                )
+
+                subordinado_done = len(faltantes_subordinado) == 0
 
         summary_rows.append(
             {
@@ -237,6 +241,7 @@ def build_tracking(df_resp: pd.DataFrame, df_part: pd.DataFrame):
         details[nombre] = {
             "cargo": cargo,
             "faltantes_subordinado": faltantes_subordinado,
+            "aplica_subordinado": sub_flag == "si",
         }
 
     df_all = pd.DataFrame(summary_rows)
@@ -262,26 +267,29 @@ def render_tracking_tables(df_respuestas: pd.DataFrame, df_participantes: pd.Dat
     )
 
     if show_detail:
-        st.markdown("### Detalle de subordinados pendientes")
+        st.markdown("### Ver detalle por persona")
+        persona = st.selectbox(
+            "Selecciona una persona para ver detalle:",
+            df_all["Nombre"].tolist(),
+            key="detalle_tracking_persona",
+        )
 
-        dg_rows = df_participantes[df_participantes["Cargo"].astype(str).apply(_is_dg)]
-        if dg_rows.empty:
-            st.info("No se encontró ningún Director General en la pestaña Participantes.")
-            return
+        info = details.get(persona, {})
+        cargo = info.get("cargo", "")
+        aplica_subordinado = info.get("aplica_subordinado", False)
+        faltantes = info.get("faltantes_subordinado", [])
 
-        for _, dg_row in dg_rows.iterrows():
-            dg_nombre = str(dg_row["Nombre"]).strip()
-            dg_cargo = str(dg_row["Cargo"]).strip()
-            info = details.get(dg_nombre, {})
-            faltantes = info.get("faltantes_subordinado", [])
+        st.markdown(f"**{persona} — {cargo}**")
 
-            with st.expander(f"{dg_nombre} — {dg_cargo}"):
-                if faltantes:
-                    st.write("**Le falta evaluar a:**")
-                    for item in faltantes:
-                        st.write(f"- {item}")
-                else:
-                    st.success("Completó la evaluación de todos sus subordinados.")
+        if not aplica_subordinado:
+            st.info("A esta persona no le aplica evaluación a subordinados según la hoja Participantes.")
+        else:
+            if faltantes:
+                st.write("**Le falta evaluar a:**")
+                for item in faltantes:
+                    st.write(f"- {item}")
+            else:
+                st.success("Completó la evaluación de todos sus subordinados.")
 
 
 def main():
