@@ -483,7 +483,7 @@ def main():
             render_glosario()
 
     with tab3:
-        render_tracking_tables(df, df_participantes, show_detail=False)
+        render_tracking_tables(df, df_participantes, show_detail=True)
 
 
 if __name__ == "__main__":
